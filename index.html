@@ -1135,18 +1135,22 @@ function renderCatSection() {
   const {m, y} = getFilter();
   const allDesp = db.despesas.filter(d => inPeriod(d.data, m, y));
 
-  // ── Chips de filtro: Todos + Cartões (com gastos, maior→menor) + Formas (dinâmico, maior→menor) ──
+  // conjunto dos números de cartões registrados
+  const numerosRegistrados = new Set(db.cartoes.map(c => c.numero));
+  // helper: retorna o número do cartão na observação, ou null
+  const getCardNum = d => { const m2 = (d.observacao||'').match(/[•]{4}\s*(\d{4})/); return m2 ? m2[1] : null; };
+
   const cfcEl = document.getElementById('cardFilterRow');
   if (cfcEl) {
     const todoTotal = allDesp.reduce((s,d)=>s+parseFloat(d.valor||0),0);
     const nenhum = !dashCardFilter && !dashFormaFilter;
 
-    // Cartões — calculados, filtrados (sp>0), ordenados maior→menor
+    // ── Cartões registrados (sp>0, maior→menor) ──
     const cartaoChips = db.cartoes
       .map(c => ({
         c,
-        sp: allDesp.filter(d=>(d.observacao||'').includes('•••• '+c.numero))
-                   .reduce((s,d)=>s+parseFloat(d.valor||0),0)
+        sp: allDesp.filter(d => getCardNum(d) === c.numero)
+                   .reduce((s,d)=>s+parseFloat(d.valor||0), 0)
       }))
       .filter(({sp}) => sp > 0)
       .sort((a,b) => b.sp - a.sp)
@@ -1159,13 +1163,28 @@ function renderCatSection() {
         </div>`;
       }).join('');
 
-    // Formas de pagamento — dinâmico: lê todos os valores únicos do período,
-    // exclui "Cartão de Crédito" (representado pelos chips de cartão), filtra sp>0, ordena maior→menor
-    const formaIcons = {PIX:'📱',Débito:'🏧','Débito Automático':'🏧',Boleto:'📄',Dinheiro:'💵',Transferência:'🔄','Ted':'🔄','Ted/Doc':'🔄'};
+    // ── "Outros Cartões": Cartão de Crédito sem número registrado ──
+    const outrosCC = allDesp.filter(d => {
+      const f = (d.forma_pagamento||'').toLowerCase();
+      const num = getCardNum(d);
+      return (f === 'cartão de crédito' || f === 'cartao de credito') &&
+             (!num || !numerosRegistrados.has(num));
+    });
+    const outrosCCTotal = outrosCC.reduce((s,d)=>s+parseFloat(d.valor||0),0);
+    const outrosCCChip = outrosCCTotal > 0
+      ? `<div class="cfc ${dashFormaFilter==='__outros_cc__'?'active':''}" onclick="setDashFormaFilter('__outros_cc__')">
+          <span class="cfc-name">💳 Outros Cartões</span>
+          <span class="cfc-num">Sem cadastro</span>
+          <span class="cfc-val">${fmtBRL(outrosCCTotal)}</span>
+        </div>` : '';
+
+    // ── Outras formas de pagamento (dinâmico, excl. Cartão de Crédito, maior→menor) ──
+    const formaIcons = {PIX:'📱',Débito:'🏧','Débito Automático':'🏧',Boleto:'📄',Dinheiro:'💵',Transferência:'🔄',TED:'🔄','TED/DOC':'🔄'};
     const formaMap = {};
     allDesp.forEach(d => {
       const f = (d.forma_pagamento||'').trim();
-      if (f && f.toLowerCase() !== 'cartão de crédito' && f.toLowerCase() !== 'cartao de credito') {
+      const fLow = f.toLowerCase();
+      if (f && fLow !== 'cartão de crédito' && fLow !== 'cartao de credito') {
         formaMap[f] = (formaMap[f]||0) + parseFloat(d.valor||0);
       }
     });
@@ -1187,13 +1206,23 @@ function renderCatSection() {
         <span class="cfc-name">🏦 Todos</span>
         <span class="cfc-num">Geral</span>
         <span class="cfc-val">${fmtBRL(todoTotal)}</span>
-      </div>` + cartaoChips + formaChips;
+      </div>` + cartaoChips + outrosCCChip + formaChips;
   }
 
   // ── Filtrar despesas pelo filtro ativo ──
   let catDesp = allDesp;
-  if (dashCardFilter)        catDesp = allDesp.filter(d=>(d.observacao||'').includes('•••• '+dashCardFilter));
-  else if (dashFormaFilter)  catDesp = allDesp.filter(d=>(d.forma_pagamento||'').trim()===dashFormaFilter);
+  if (dashCardFilter) {
+    catDesp = allDesp.filter(d => getCardNum(d) === dashCardFilter);
+  } else if (dashFormaFilter === '__outros_cc__') {
+    catDesp = allDesp.filter(d => {
+      const f = (d.forma_pagamento||'').toLowerCase();
+      const num = getCardNum(d);
+      return (f === 'cartão de crédito' || f === 'cartao de credito') &&
+             (!num || !numerosRegistrados.has(num));
+    });
+  } else if (dashFormaFilter) {
+    catDesp = allDesp.filter(d => (d.forma_pagamento||'').trim() === dashFormaFilter);
+  }
 
   const bycat = {};
   catDesp.forEach(d => { bycat[d.categoria]=(bycat[d.categoria]||0)+parseFloat(d.valor||0); });
@@ -1235,8 +1264,19 @@ function openCatDetail(idx) {
   if (!cat) return;
   const {m, y} = getFilter();
   let list = db.despesas.filter(d => d.categoria === cat.nome && inPeriod(d.data, m, y));
-  if (dashCardFilter)       list = list.filter(d => (d.observacao||'').includes('•••• '+dashCardFilter));
-  else if (dashFormaFilter) list = list.filter(d => d.forma_pagamento === dashFormaFilter);
+  const _getNum = d => { const mx = (d.observacao||'').match(/[•]{4}\s*(\d{4})/); return mx ? mx[1] : null; };
+  const _nums = new Set(db.cartoes.map(c => c.numero));
+  if (dashCardFilter) {
+    list = list.filter(d => _getNum(d) === dashCardFilter);
+  } else if (dashFormaFilter === '__outros_cc__') {
+    list = list.filter(d => {
+      const f = (d.forma_pagamento||'').toLowerCase();
+      const num = _getNum(d);
+      return (f === 'cartão de crédito' || f === 'cartao de credito') && (!num || !_nums.has(num));
+    });
+  } else if (dashFormaFilter) {
+    list = list.filter(d => (d.forma_pagamento||'').trim() === dashFormaFilter);
+  }
   list = list.sort((a,b) => new Date(b.data) - new Date(a.data));
   const total = list.reduce((s,d) => s + parseFloat(d.valor||0), 0);
 
