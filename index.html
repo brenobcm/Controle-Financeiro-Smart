@@ -557,17 +557,8 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
         <select id="despCatFilter" class="form-select" style="width:auto;font-size:11px;padding:5px 8px" onchange="renderDespesas()">
           <option value="">Todas as categorias</option>
         </select>
-        <select id="despCartaoFilter" class="form-select" style="width:auto;font-size:11px;padding:5px 8px" onchange="renderDespesas()">
-          <option value="">💳 Todos os cartões</option>
-        </select>
         <select id="despFormaFilter" class="form-select" style="width:auto;font-size:11px;padding:5px 8px" onchange="renderDespesas()">
           <option value="">Todas as formas</option>
-          <option value="Cartão de Crédito">Cartão de Crédito</option>
-          <option value="PIX">PIX</option>
-          <option value="Débito">Débito</option>
-          <option value="Boleto">Boleto</option>
-          <option value="Dinheiro">Dinheiro</option>
-          <option value="Transferência">Transferência</option>
         </select>
         <select id="despTipoFilter" class="form-select" style="width:auto;font-size:11px;padding:5px 8px" onchange="renderDespesas()">
           <option value="">Fixo + Variável</option>
@@ -1432,7 +1423,7 @@ function getDespCartao(d) {
 }
 
 function limparFiltrosDespesas() {
-  ['despSearch','despFilter','despCatFilter','despCartaoFilter','despFormaFilter','despTipoFilter','despSort'].forEach(id => {
+  ['despSearch','despFilter','despCatFilter','despFormaFilter','despTipoFilter','despSort'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = id === 'despSort' ? 'date_desc' : '';
   });
@@ -1446,15 +1437,24 @@ function renderDespesas() {
   catSel.innerHTML = '<option value="">Todas as categorias</option>' +
     [...db.categorias].sort((a,b) => a.nome.localeCompare(b.nome,'pt')).map(c => `<option value="${c.nome}" ${c.nome===curCat?'selected':''}>${c.emoji} ${c.nome}</option>`).join('');
 
-  const cartaoSel = document.getElementById('despCartaoFilter');
-  const curCartao = cartaoSel.value;
-  cartaoSel.innerHTML = '<option value="">💳 Todos os cartões</option>' +
-    [...db.cartoes].sort((a,b) => a.banco.localeCompare(b.banco,'pt')).map(c => `<option value="${c.numero}" ${c.numero===curCartao?'selected':''}>${c.banco} •••• ${c.numero}</option>`).join('');
+  // Populate Forma de Pagamento — inclui cartões cadastrados + formas únicas do DB
+  const formasSel = document.getElementById('despFormaFilter');
+  const curForma = formasSel.value;
+  const formasUnicas = [...new Set(db.despesas.map(d => (d.forma_pagamento||'').trim()).filter(Boolean))]
+    .filter(f => f.toLowerCase() !== 'cartão de crédito' && f.toLowerCase() !== 'cartao de credito')
+    .sort((a,b) => a.localeCompare(b,'pt'));
+  const cartoesSorted = [...db.cartoes].sort((a,b) => a.banco.localeCompare(b.banco,'pt'));
+  formasSel.innerHTML = '<option value="">Todas as formas</option>' +
+    (cartoesSorted.length ? '<optgroup label="── Cartões ──">' +
+      cartoesSorted.map(c => `<option value="cartao:${c.numero}" ${'cartao:'+c.numero===curForma?'selected':''}>${c.banco} •••• ${c.numero}</option>`).join('') +
+      '</optgroup>' : '') +
+    (formasUnicas.length ? '<optgroup label="── Outras Formas ──">' +
+      formasUnicas.map(f => `<option value="${f}" ${f===curForma?'selected':''}>${f}</option>`).join('') +
+      '</optgroup>' : '');
 
   // Ler filtros
   const fMes    = document.getElementById('despFilter').value;
   const fCat    = document.getElementById('despCatFilter').value;
-  const fCartao = document.getElementById('despCartaoFilter').value;
   const fForma  = document.getElementById('despFormaFilter').value;
   const fTipo   = document.getElementById('despTipoFilter').value;
   const fSearch = (document.getElementById('despSearch').value||'').toLowerCase().trim();
@@ -1472,13 +1472,19 @@ function renderDespesas() {
   let list = [...db.despesas].sort(SORTS[sortVal] || SORTS.date_desc);
   if (fMes)    list = list.filter(d => new Date(d.data+'T00:00:00').getMonth() === parseInt(fMes));
   if (fCat)    list = list.filter(d => d.categoria === fCat);
-  if (fForma)  list = list.filter(d => d.forma_pagamento === fForma);
   if (fTipo)   list = list.filter(d => d.tipo === fTipo);
-  if (fCartao) list = list.filter(d => (d.observacao||'').includes('•••• '+fCartao));
+  if (fForma) {
+    if (fForma.startsWith('cartao:')) {
+      const num = fForma.split(':')[1];
+      list = list.filter(d => (d.observacao||'').includes('•••• '+num));
+    } else {
+      list = list.filter(d => (d.forma_pagamento||'').trim() === fForma);
+    }
+  }
   if (fSearch) list = list.filter(d => (d.nome||'').toLowerCase().includes(fSearch) || (d.categoria||'').toLowerCase().includes(fSearch) || (d.observacao||'').toLowerCase().includes(fSearch));
 
   const total = list.reduce((s,d) => s+parseFloat(d.valor||0), 0);
-  const ativos = [fMes,fCat,fCartao,fForma,fTipo,fSearch].filter(Boolean).length;
+  const ativos = [fMes,fCat,fForma,fTipo,fSearch].filter(Boolean).length;
   currentDespList = list;
 
   // Update bulk bar category options
