@@ -1476,7 +1476,10 @@ function renderDespesas() {
   if (fForma) {
     if (fForma.startsWith('cartao:')) {
       const num = fForma.split(':')[1];
-      list = list.filter(d => (d.observacao||'').includes('•••• '+num));
+      list = list.filter(d =>
+        (d.observacao||'').includes('•••• '+num) ||
+        (d.forma_pagamento||'').includes('•••• '+num)
+      );
     } else {
       list = list.filter(d => (d.forma_pagamento||'').trim() === fForma);
     }
@@ -1882,7 +1885,7 @@ const FORMS = {
       {id:'valor',label:'Valor (R$)',type:'number',req:true,placeholder:'0,00',prefix:'R$'},
       {id:'data',label:'Data',type:'date',req:true},
       {id:'categoria',label:'Categoria',type:'select_db',db:'categorias',req:true},
-      {id:'forma_pagamento',label:'Forma de Pagamento',type:'select',opts:['PIX','Cartão de Crédito','Débito','Boleto','Dinheiro','Débito Automático','Transferência']},
+      {id:'forma_pagamento',label:'Forma de Pagamento',type:'select_forma'},
       {id:'tipo',label:'Tipo',type:'select',req:true,opts:['Fixo','Variável']},
       {id:'emoji',label:'Emoji',type:'text',placeholder:'Ex: 🏠 🛒 ⛽',maxlen:4},
       {id:'observacao',label:'Observação',type:'textarea',placeholder:'Notas adicionais...'}
@@ -1999,6 +2002,20 @@ function buildForm(fields, data) {
       const curVal = data && data[f.id] !== undefined ? data[f.id] : '';
       inp = `<input class="form-input" type="text" id="f_${f.id}" list="${listId}" placeholder="${f.placeholder||''}" value="${curVal}" autocomplete="off">
              <datalist id="${listId}">${opts}</datalist>`;
+    } else if (f.type === 'select_forma') {
+      const formasEstaticas = ['PIX','Débito','Boleto','Dinheiro','Débito Automático','Transferência'];
+      const cartoesSorted = [...db.cartoes].sort((a,b) => a.banco.localeCompare(b.banco,'pt'));
+      const curVal = data && data[f.id] ? data[f.id] : '';
+      const cartaoOpts = cartoesSorted.map(c => {
+        const v = c.banco + ' •••• ' + c.numero;
+        return `<option value="${v}" ${curVal===v?'selected':''}>${v}</option>`;
+      }).join('');
+      const formaOpts = formasEstaticas.map(o => `<option value="${o}" ${curVal===o?'selected':''}>${o}</option>`).join('');
+      inp = `<select class="form-select" id="f_${f.id}">
+        <option value="">Selecione...</option>
+        ${cartoesSorted.length ? `<optgroup label="── Cartões ──">${cartaoOpts}</optgroup>` : ''}
+        <optgroup label="── Outras Formas ──">${formaOpts}</optgroup>
+      </select>`;
     } else if (f.type === 'textarea') {
       inp = `<textarea class="form-textarea" id="f_${f.id}" placeholder="${f.placeholder||''}">${data&&data[f.id]?data[f.id]:''}</textarea>`;
     } else {
