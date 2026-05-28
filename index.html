@@ -488,14 +488,23 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
     </div>
   </div>
 
-  <!-- CATEGORY CHIPS -->
+  <!-- CATEGORY CHIPS — DESPESAS -->
   <div class="card gold" style="margin-top:14px">
-    <div class="card-head"><div class="card-title"><span class="ico">#</span>Categorias do Mês</div></div>
+    <div class="card-head"><div class="card-title"><span class="ico">#</span>Categorias do Mês Despesas</div></div>
     <div class="cfc-row" id="cardFilterRow"></div>
     <div id="catChipsWrap">
       <div class="cat-grid" id="catChips"></div>
     </div>
     <div id="catDetailView" style="display:none"></div>
+  </div>
+
+  <!-- CATEGORY CHIPS — RECEITAS -->
+  <div class="card green" style="margin-top:14px">
+    <div class="card-head"><div class="card-title"><span class="ico" style="background:var(--green);color:#fff">R$</span>Categorias do Mês Receitas</div></div>
+    <div class="cfc-row" id="recFormaFilterRow"></div>
+    <div id="recCatChipsWrap">
+      <div class="cat-grid" id="recCatChips"></div>
+    </div>
   </div>
 </div>
 
@@ -1053,6 +1062,7 @@ let currentModal = null;
 let editingId = null;
 let dashCardFilter = null; // null = todos; string = últimos 4 dígitos do cartão
 let dashFormaFilter = null; // null = todos; string = forma de pagamento
+let dashRecFormaFilter = null; // null = todos; string = forma de recebimento (receitas)
 let catRecSort  = {col:'nome', dir:'asc'};
 let catDespSort = {col:'nome', dir:'asc'};
 let selectedDespIds = new Set();
@@ -1216,6 +1226,7 @@ function renderDashboard() {
   ).join('') : emptyState('Nenhuma despesa cadastrada');
 
   renderCatSection();
+  renderRecCatSection();
 }
 
 function renderCatSection() {
@@ -1335,6 +1346,78 @@ function renderCatSection() {
         </div>`;
       }).join('')
     : `<div style="text-align:center;padding:28px;color:var(--ink-muted);font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:1px">NENHUMA DESPESA NO PERÍODO</div>`;
+}
+
+function renderRecCatSection() {
+  const {m, y} = getFilter();
+  const allRec = db.receitas.filter(r => inPeriod(r.data, m, y));
+
+  const formaFilterRowEl = document.getElementById('recFormaFilterRow');
+  const catChipsEl       = document.getElementById('recCatChips');
+  if (!formaFilterRowEl || !catChipsEl) return;
+
+  // ── Chips de forma de recebimento ──────────────────────────────
+  const formaIcons = {PIX:'⚡',TED:'🔄',DOC:'📄',Dinheiro:'💵',Transferência:'🔄','Depósito':'🏦'};
+  const formaMap = {};
+  allRec.forEach(r => {
+    const f = (r.banco||'').trim() || 'Outros';
+    formaMap[f] = (formaMap[f]||0) + parseFloat(r.valor||0);
+  });
+
+  const todoTotal = allRec.reduce((s,r) => s + parseFloat(r.valor||0), 0);
+  const nenhum    = !dashRecFormaFilter;
+
+  const formaChips = Object.entries(formaMap)
+    .filter(([,v]) => v > 0)
+    .sort((a,b) => b[1] - a[1])
+    .map(([forma, val]) => {
+      const isAct = dashRecFormaFilter === forma;
+      const icon  = formaIcons[forma] || '💳';
+      return `<div class="cfc ${isAct?'active':''}" onclick="setDashRecFormaFilter('${forma}')">
+        <span class="cfc-name">${icon} ${forma}</span>
+        <span class="cfc-num">Recebimento</span>
+        <span class="cfc-val">${fmtBRL(val)}</span>
+      </div>`;
+    }).join('');
+
+  formaFilterRowEl.innerHTML =
+    `<div class="cfc ${nenhum?'active':''}" onclick="setDashRecFormaFilter(null)">
+      <span class="cfc-name">🏦 Todos</span>
+      <span class="cfc-num">Geral</span>
+      <span class="cfc-val">${fmtBRL(todoTotal)}</span>
+    </div>` + formaChips;
+
+  // ── Filtrar receitas pela forma ativa ──
+  const recFiltradas = dashRecFormaFilter
+    ? allRec.filter(r => ((r.banco||'').trim()||'Outros') === dashRecFormaFilter)
+    : allRec;
+
+  // ── Cards por categoria ─────────────────────────────────────────
+  const bycat = {};
+  recFiltradas.forEach(r => { bycat[r.categoria] = (bycat[r.categoria]||0) + parseFloat(r.valor||0); });
+
+  // Junta cat_receitas + categorias dinâmicas encontradas nos dados
+  const catNames = [...new Set([
+    ...db.cat_receitas.map(c => c.nome),
+    ...Object.keys(bycat)
+  ])].filter(n => (bycat[n]||0) > 0).sort((a,b) => (bycat[b]||0)-(bycat[a]||0));
+
+  catChipsEl.innerHTML = catNames.length
+    ? catNames.map(nome => {
+        const cat = db.cat_receitas.find(c => c.nome === nome);
+        const emoji = cat ? (cat.emoji||'💰') : '💰';
+        return `<div class="cat-chip" style="border-top-color:var(--green)">
+          <span class="cat-em">${emoji}</span>
+          <span class="cat-nm">${nome}</span>
+          <span class="cat-vl" style="color:var(--green)">${fmtBRL(bycat[nome])}</span>
+        </div>`;
+      }).join('')
+    : `<div style="text-align:center;padding:28px;color:var(--ink-muted);font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:1px">NENHUMA RECEITA NO PERÍODO</div>`;
+}
+
+function setDashRecFormaFilter(forma) {
+  dashRecFormaFilter = dashRecFormaFilter === forma ? null : forma;
+  renderRecCatSection();
 }
 
 function setDashCardFilter(numero) {
