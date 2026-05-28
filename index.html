@@ -508,7 +508,7 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
   <div class="card green">
     <div class="card-head">
       <div class="card-title"><span class="ico">R$</span>Todas as Receitas</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select id="recFilter" class="form-select" style="width:auto;font-size:11px;padding:5px 8px" onchange="renderReceitas()">
           <option value="">Todos os meses</option>
           <option value="0">Janeiro</option><option value="1">Fevereiro</option>
@@ -519,6 +519,11 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
           <option value="10">Novembro</option><option value="11">Dezembro</option>
         </select>
       </div>
+    </div>
+    <div id="recBulkBar" class="bulk-bar" style="display:none">
+      <span id="recBulkCount" style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--gold);letter-spacing:1px;white-space:nowrap;margin-right:4px"></span>
+      <button onclick="applyBulkDeleteRec()" class="btn btn-sm" style="background:var(--red);color:#fff;border:none">🗑 Apagar</button>
+      <button onclick="clearRecBulkSelect()" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.2)">✕ Cancelar</button>
     </div>
     <div id="receitasList"></div>
   </div>
@@ -980,6 +985,8 @@ let catRecSort  = {col:'nome', dir:'asc'};
 let catDespSort = {col:'nome', dir:'asc'};
 let selectedDespIds = new Set();
 let currentDespList = [];
+let selectedRecIds = new Set();
+let currentRecList = [];
 
 function go(tab, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -995,7 +1002,7 @@ function go(tab, el) {
 
 function renderTab(tab) {
   if (tab === 'dashboard') renderDashboard();
-  else if (tab === 'receitas') { renderReceitas(); renderCatReceitas(); }
+  else if (tab === 'receitas') { selectedRecIds.clear(); renderReceitas(); renderCatReceitas(); }
   else if (tab === 'despesas') { renderDespesas(); renderCatDespesasInline(); }
   else if (tab === 'orcamento') renderOrcamento();
   else if (tab === 'cartoes') renderCartoes();
@@ -1325,11 +1332,23 @@ function renderReceitas() {
   if (f !== '') list = list.filter(r => {
     const d = new Date(r.data+'T00:00:00'); return d.getMonth() === parseInt(f);
   });
+  currentRecList = list;
   const total = list.reduce((s,r) => s+parseFloat(r.valor||0), 0);
+  const allChecked = list.length > 0 && list.every(r => selectedRecIds.has(r.id));
+
   document.getElementById('receitasList').innerHTML = list.length ?
-    `<div style="margin-bottom:10px;font-family:'Oswald',sans-serif;font-size:11px;color:var(--ink-muted);letter-spacing:1px">TOTAL: <strong style="color:var(--green);font-size:14px">${fmtBRL(total)}</strong></div>` +
-    list.map(r => `
-    <div class="tx-row" style="grid-template-columns:28px 1fr auto auto auto">
+    `<div style="margin-bottom:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1px;color:var(--ink-muted);user-select:none">
+         <input type="checkbox" id="recCheckAll" ${allChecked?'checked':''} onchange="selectAllRecs(this.checked)" style="cursor:pointer">
+         SELECIONAR TODAS
+       </label>
+       <span style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--ink-muted);letter-spacing:1px">TOTAL: <strong style="color:var(--green);font-size:14px">${fmtBRL(total)}</strong></span>
+     </div>` +
+    list.map(r => {
+      const sel = selectedRecIds.has(r.id);
+      return `
+    <div class="tx-row" style="grid-template-columns:28px 28px 1fr auto auto auto;${sel?'background:var(--green-soft);':''}">
+      <input type="checkbox" ${sel?'checked':''} onchange="toggleRecRow('${r.id}',this.checked)" style="cursor:pointer;align-self:center">
       <div class="tx-ico rec">${r.tipo_icone||r.nome.slice(0,2).toUpperCase()}</div>
       <div><div class="tx-nm">${r.nome}</div><div class="tx-meta"><span>${fmtDate(r.data)}</span><span>·</span><span>${r.categoria}</span><span>·</span><span>${r.banco||''}</span><span>·</span><span>${r.frequencia||''}</span></div></div>
       <div class="tag ${r.tipo==='Fixo'?'fixed':'var'}">${r.tipo}</div>
@@ -1338,17 +1357,57 @@ function renderReceitas() {
         <button class="btn btn-sm btn-icon" onclick="editRec('${r.id}')" title="Editar">✏️</button>
         <button class="btn btn-sm btn-icon btn-danger" onclick="delRec('${r.id}')" title="Excluir">🗑</button>
       </div>
-    </div>`).join('') : emptyState('Nenhuma receita. Clique em "+ Nova Receita"');
+    </div>`;
+    }).join('') : emptyState('Nenhuma receita. Clique em "+ Nova Receita"');
+
+  updateRecBulkBar();
 }
 
 async function delRec(id) {
   if (!confirm('Excluir esta receita?')) return;
   db.receitas = db.receitas.filter(r => r.id !== id);
+  selectedRecIds.delete(id);
   await _sb.from('receitas').delete().eq('id', id);
   renderReceitas(); renderDashboard(); toast('Receita excluída');
 }
 
 function editRec(id) { openModal('receita', db.receitas.find(r => r.id === id)); }
+
+function toggleRecRow(id, checked) {
+  if (checked) selectedRecIds.add(id);
+  else selectedRecIds.delete(id);
+  renderReceitas();
+}
+
+function selectAllRecs(checked) {
+  currentRecList.forEach(r => { if (checked) selectedRecIds.add(r.id); else selectedRecIds.delete(r.id); });
+  renderReceitas();
+}
+
+function updateRecBulkBar() {
+  const bar = document.getElementById('recBulkBar');
+  const cnt = document.getElementById('recBulkCount');
+  const n = selectedRecIds.size;
+  if (bar) bar.style.display = n > 0 ? '' : 'none';
+  if (cnt) cnt.textContent = `${n} receita${n !== 1 ? 's' : ''} selecionada${n !== 1 ? 's' : ''}`;
+}
+
+function clearRecBulkSelect() {
+  selectedRecIds.clear();
+  renderReceitas();
+}
+
+async function applyBulkDeleteRec() {
+  const n = selectedRecIds.size;
+  if (n === 0) return;
+  if (!confirm(`Apagar ${n} receita${n > 1 ? 's' : ''} selecionada${n > 1 ? 's' : ''}? Esta ação não pode ser desfeita.`)) return;
+  const ids = [...selectedRecIds];
+  db.receitas = db.receitas.filter(r => !ids.includes(r.id));
+  await Promise.all(ids.map(id => _sb.from('receitas').delete().eq('id', id)));
+  toast(`🗑 ${n} receita${n > 1 ? 's' : ''} apagada${n > 1 ? 's' : ''}!`);
+  selectedRecIds.clear();
+  renderReceitas(); renderDashboard();
+}
 
 function sortCatRec(col) {
   catRecSort = catRecSort.col === col && catRecSort.dir === 'asc'
