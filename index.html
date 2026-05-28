@@ -506,6 +506,7 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
     <div id="recCatChipsWrap">
       <div class="cat-grid" id="recCatChips"></div>
     </div>
+    <div id="recCatDetailView" style="display:none"></div>
   </div>
 </div>
 
@@ -1410,7 +1411,8 @@ function renderRecCatSection() {
     ? catNames.map(nome => {
         const cat = db.cat_receitas.find(c => c.nome === nome);
         const emoji = cat ? (cat.emoji||'💰') : '💰';
-        return `<div class="cat-chip" style="border-top-color:var(--green)">
+        const nomeEnc = encodeURIComponent(nome);
+        return `<div class="cat-chip" style="border-top-color:var(--green);cursor:pointer" onclick="openRecCatDetail('${nomeEnc}')">
           <span class="cat-em">${emoji}</span>
           <span class="cat-nm">${nome}</span>
           <span class="cat-vl" style="color:var(--green)">${fmtBRL(bycat[nome])}</span>
@@ -1419,8 +1421,59 @@ function renderRecCatSection() {
     : `<div style="text-align:center;padding:28px;color:var(--ink-muted);font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:1px">NENHUMA RECEITA NO PERÍODO</div>`;
 }
 
+function openRecCatDetail(nomeEnc) {
+  const catNome = decodeURIComponent(nomeEnc);
+  const {m, y} = getFilter();
+  let list = db.receitas.filter(r => r.categoria === catNome && inPeriod(r.data, m, y));
+  // Aplica filtro de forma ativa
+  if (dashRecFormaFilter) {
+    list = list.filter(r => ((r.banco||'').trim()||'Outros') === dashRecFormaFilter);
+  }
+  list = list.sort((a,b) => new Date(b.data) - new Date(a.data));
+  const total = list.reduce((s,r) => s + parseFloat(r.valor||0), 0);
+
+  const cat = db.cat_receitas.find(c => c.nome === catNome);
+  const emoji = cat ? (cat.emoji||'💰') : '💰';
+
+  document.getElementById('recCatChipsWrap').style.display = 'none';
+  document.getElementById('recCatDetailView').style.display = 'block';
+  document.getElementById('recCatDetailView').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <button onclick="closeRecCatDetail()" style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:7px 14px;cursor:pointer;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:1px;display:flex;align-items:center;gap:5px">← VOLTAR</button>
+      <span style="font-size:22px">${emoji}</span>
+      <span style="font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:1px">${catNome}</span>
+      <span style="margin-left:auto;font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;color:var(--green)">${fmtBRL(total)}</span>
+    </div>
+    ${list.length ? list.map(r => `
+      <div class="tx-row" style="grid-template-columns:28px 1fr auto auto">
+        <div class="tx-ico rec">${r.tipo_icone || r.nome.slice(0,2).toUpperCase()}</div>
+        <div>
+          <div class="tx-nm">${r.nome}</div>
+          <div class="tx-meta">
+            <span>${fmtDate(r.data)}</span>
+            ${r.banco ? `<span>·</span><span>${r.banco}</span>` : ''}
+            ${r.frequencia ? `<span>·</span><span>${r.frequencia}</span>` : ''}
+          </div>
+        </div>
+        <div class="tag ${r.tipo==='Fixo'?'fixed':'var'}">${r.tipo||''}</div>
+        <div class="tx-val rec">+ ${fmtBRL(r.valor)}</div>
+      </div>`).join('') :
+      `<div style="text-align:center;padding:28px;color:var(--ink-muted);font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:1px">NENHUMA RECEITA NESTA CATEGORIA NO PERÍODO</div>`}
+  `;
+}
+
+function closeRecCatDetail() {
+  document.getElementById('recCatDetailView').style.display = 'none';
+  document.getElementById('recCatChipsWrap').style.display = '';
+}
+
 function setDashRecFormaFilter(forma) {
   dashRecFormaFilter = dashRecFormaFilter === forma ? null : forma;
+  // Fecha o detalhe se estiver aberto
+  const dv = document.getElementById('recCatDetailView');
+  const cw = document.getElementById('recCatChipsWrap');
+  if (dv) dv.style.display = 'none';
+  if (cw) cw.style.display = '';
   renderRecCatSection();
 }
 
