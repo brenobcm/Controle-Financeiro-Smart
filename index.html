@@ -439,6 +439,7 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
     <div><div class="eyebrow">Visão Geral</div><h1>Dashboard</h1></div>
     <div class="actions">
       <select id="filterMonth" class="form-select" style="width:auto;font-size:11px;padding:6px 10px" onchange="renderAll()">
+        <option value="">Todos os meses</option>
         <option value="0">Janeiro</option><option value="1">Fevereiro</option>
         <option value="2">Março</option><option value="3">Abril</option>
         <option value="4">Maio</option><option value="5">Junho</option>
@@ -1103,13 +1104,15 @@ function fmtBRLk(v) { v = parseFloat(v||0); return v >= 1000 ? 'R$ '+(v/1000).to
 function fmtDate(d) { if (!d) return ''; const p = d.split('-'); return p[2]+'/'+p[1]+'/'+p[0].slice(2); }
 function monthName(m) { return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m]; }
 function getFilter() {
-  const m = parseInt(document.getElementById('filterMonth').value);
+  const raw = document.getElementById('filterMonth').value;
+  const m = raw === '' ? null : parseInt(raw);  // null = todos os meses
   const y = parseInt(document.getElementById('filterYear').value);
   return {m, y};
 }
 function inPeriod(dateStr, m, y) {
   if (!dateStr) return false;
   const d = new Date(dateStr + 'T00:00:00');
+  if (m === null) return d.getFullYear() === y;   // todos os meses do ano
   return d.getMonth() === m && d.getFullYear() === y;
 }
 function catColor(cat) {
@@ -1168,10 +1171,11 @@ function renderDashboard() {
     <div class="kpi-card violet"><div class="kpi-lbl">Patrimônio Invest.</div><div class="kpi-val">${fmtBRLk(totalInvest)}</div><div class="kpi-sub">${db.investimentos.length} ativo(s)</div></div>
   `;
 
-  // Bar Chart - 12 months
+  // Bar Chart - 12 months (se "Todos os meses", âncora no mês atual)
+  const barAnchorM = m !== null ? m : new Date().getMonth();
   let bars = '';
   for (let i = 11; i >= 0; i--) {
-    let dm = m - i; let dy = y;
+    let dm = barAnchorM - i; let dy = y;
     while (dm < 0) { dm += 12; dy--; }
     const mr = db.receitas.filter(r => inPeriod(r.data, dm, dy));
     const md = db.despesas.filter(d => inPeriod(d.data, dm, dy));
