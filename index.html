@@ -781,7 +781,13 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
             <tbody id="importTableBody"></tbody>
           </table>
         </div>
-        <div style="margin-top:10px;font-size:11px;color:var(--ink-muted)">💡 Dica: Clique na categoria para alterar antes de importar. As sugestões são baseadas na descrição da transação.</div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--ink-muted)">💡 Dica: Ajuste as categorias antes de importar.</span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--ink-muted)">
+            <input type="checkbox" id="chkUpdateDups" checked style="cursor:pointer">
+            <span>Atualizar registros já existentes <strong style="color:var(--navy)">(recomendado — garante total correto)</strong></span>
+          </label>
+        </div>
       </div>
     </div>
     <div class="modal-footer" id="importFooter">
@@ -2461,11 +2467,47 @@ async function confirmImport() {
   const selecionadas = importRows.filter(r => r.selecionado);
   if (!selecionadas.length) { toast('Selecione ao menos uma transação.'); return; }
 
-  let novas = 0, duplicadas = 0;
+  const updateDups = document.getElementById('chkUpdateDups')?.checked !== false;
+  let novas = 0, atualizadas = 0, ignoradas = 0;
   const toInsert = [];
+  const toUpdate = []; // {id, patch}
+
+  // Snapshot das despesas ANTES do loop — evita falsos positivos entre registros do mesmo lote
+  const existentes = new Map();
+  db.despesas.forEach(d => {
+    const k = `${d.nome}||${d.data}||${Math.round(parseFloat(d.valor||0)*100)}`;
+    existentes.set(k, d);
+  });
+
   selecionadas.forEach(r => {
-    const dup = db.despesas.find(d => d.nome === r.nome && d.data === r.data && d.valor == r.valor);
-    if (dup) { duplicadas++; return; }
+    const forma = r.forma_pagamento || (r._fmt === 'banco' ? 'Cartão de Crédito' : '');
+    const emoji = getCatEmoji(r.categoria);
+    const obs   = r._fmt === 'banco' ? ((r.tipo_compra||'') + (r.cartao ? ' · Cartão •••• ' + r.cartao : '')) : '';
+
+    // Detectar duplicata apenas contra registros PRÉ-EXISTENTES (não do lote atual)
+    const k = `${r.nome}||${r.data}||${Math.round(parseFloat(r.valor||0)*100)}`;
+    const dup = existentes.get(k);
+
+    if (dup) {
+      if (updateDups) {
+        // Atualiza campos do registro existente
+        const patch = {
+          forma_pagamento: forma,
+          categoria: r.categoria,
+          tipo: r.tipo,
+          emoji,
+          data_compra: r.data_compra || dup.data_compra || null
+        };
+        Object.assign(dup, patch);
+        toUpdate.push({ id: dup.id, patch });
+        atualizadas++;
+      } else {
+        ignoradas++;
+      }
+      return;
+    }
+
+    // Novo registro
     const item = {
       id: uid(),
       user_id: currentUser.id,
@@ -2474,38 +2516,46 @@ async function confirmImport() {
       data: r.data,
       data_compra: r.data_compra || null,
       categoria: r.categoria,
-      forma_pagamento: r.forma_pagamento || (r._fmt === 'banco' ? 'Cartão de Crédito' : ''),
+      forma_pagamento: forma,
       tipo: r.tipo,
-      emoji: getCatEmoji(r.categoria),
-      observacao: r._fmt === 'banco'
-        ? ((r.tipo_compra||'') + (r.cartao ? ' · Cartão •••• ' + r.cartao : ''))
-        : ''
+      emoji,
+      observacao: obs
     };
     db.despesas.push(item);
     toInsert.push(item);
     novas++;
   });
 
+  // ── Inserir novos ──────────────────────────────────────────────
   if (toInsert.length) {
     const { error } = await _sb.from('despesas').insert(toInsert);
     if (error) {
-      // Se o erro for por coluna data_compra inexistente, tenta sem ela
       if (error.message && error.message.includes('data_compra')) {
         const fallback = toInsert.map(({data_compra, ...rest}) => rest);
         await _sb.from('despesas').insert(fallback);
-        toast('⚠️ Adicione a coluna data_compra no Supabase para salvar a data de compra.');
       } else {
         toast('Erro ao importar: ' + error.message); return;
       }
     }
   }
+
+  // ── Atualizar duplicatas ────────────────────────────────────────
+  if (toUpdate.length) {
+    // Batch update — atualiza em paralelo
+    await Promise.all(toUpdate.map(({id, patch}) =>
+      _sb.from('despesas').update(patch).eq('id', id)
+    ));
+  }
+
   closeImport();
   renderDespesas();
   renderDashboard();
 
-  let msg = `✅ ${novas} despesa(s) importada(s) com sucesso!`;
-  if (duplicadas > 0) msg += ` (${duplicadas} duplicata(s) ignorada(s))`;
-  toast(msg);
+  let parts = [];
+  if (novas > 0) parts.push(`${novas} nova(s)`);
+  if (atualizadas > 0) parts.push(`${atualizadas} atualizada(s)`);
+  if (ignoradas > 0) parts.push(`${ignoradas} ignorada(s)`);
+  toast(`✅ Importação concluída: ${parts.join(' · ')}`);
   go('despesas');
 }
 
