@@ -2196,25 +2196,48 @@ function autoCategoria(descricao) {
   return 'Outros';
 }
 
-// Converte data (Date, serial Excel ou string) → 'YYYY-MM-DD'
+// Converte data (Date, serial Excel ou string DD/MM/YYYY) → 'YYYY-MM-DD'
 function parseDate(rawDate) {
   if (!rawDate) return '';
-  if (rawDate instanceof Date) return rawDate.toISOString().slice(0,10);
+  if (rawDate instanceof Date) {
+    // Corrige fuso horário: usa data LOCAL, não UTC
+    const y = rawDate.getFullYear();
+    const m = String(rawDate.getMonth()+1).padStart(2,'0');
+    const d = String(rawDate.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
   if (typeof rawDate === 'number') {
-    const d = new Date((rawDate - 25569) * 86400 * 1000);
-    return d.toISOString().slice(0,10);
+    // Serial Excel → date (offset 25569 = dias entre 1900-01-01 e 1970-01-01)
+    const ms = Math.round((rawDate - 25569) * 86400 * 1000);
+    const dt = new Date(ms);
+    const y = dt.getUTCFullYear();
+    const m = String(dt.getUTCMonth()+1).padStart(2,'0');
+    const d = String(dt.getUTCDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
   }
   const s = rawDate.toString().trim();
   // DD/MM/YYYY ou DD/MM/YY
-  const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (dmyMatch) {
-    const [, dd, mm, yy] = dmyMatch;
-    const yyyy = yy.length === 2 ? '20'+yy : yy;
-    return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (dmy) {
+    const yyyy = dmy[3].length === 2 ? '20'+dmy[3] : dmy[3];
+    return `${yyyy}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
   }
-  const d = new Date(s);
-  if (!isNaN(d)) return d.toISOString().slice(0,10);
-  return s.slice(0,10);
+  // YYYY-MM-DD já correto
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  const dt = new Date(s);
+  if (!isNaN(dt)) { const y=dt.getFullYear(),m=String(dt.getMonth()+1).padStart(2,'0'),d=String(dt.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
+  return '';
+}
+
+// Converte valor (número, "R$ 1.300,00", "1300.00") → float
+function parseValor(raw) {
+  if (raw === null || raw === undefined || raw === '') return 0;
+  if (typeof raw === 'number') return raw;
+  let s = raw.toString().trim();
+  s = s.replace(/R\$\s*/gi,'').trim();  // remove R$
+  // Formato BR: 1.300,00 → remover pontos de milhar, vírgula → ponto decimal
+  if (s.includes(',')) s = s.replace(/\./g,'').replace(',','.');
+  return parseFloat(s) || 0;
 }
 
 // Detecta formato BCM ou banco e extrai transações
@@ -2224,64 +2247,63 @@ function parseExcel(workbook) {
   const ws = workbook.Sheets[sheetName];
   const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
 
-  // Detectar linha de cabeçalho
+  // Detectar linha de cabeçalho (contém "data" + "descriç" ou "valor")
   let headerRow = -1;
   for (let i = 0; i < Math.min(raw.length, 15); i++) {
-    const rowStr = (raw[i] || []).join(' ').toLowerCase();
-    if ((rowStr.includes('data') && rowStr.includes('valor')) ||
-        (rowStr.includes('date') && rowStr.includes('amount'))) {
-      headerRow = i;
-      break;
+    const cells = (raw[i]||[]).map(c=>(c||'').toString().toLowerCase());
+    const joined = cells.join(' ');
+    if (joined.includes('data') && (joined.includes('descri') || joined.includes('valor'))) {
+      headerRow = i; break;
     }
+    if (joined.includes('date') && joined.includes('amount')) { headerRow = i; break; }
   }
-  if (headerRow < 0) return rows;
+  if (headerRow < 0) { toast('Cabeçalho não encontrado. Verifique o formato do arquivo.'); return rows; }
 
-  const hdr = (raw[headerRow] || []).map(h => (h||'').toString().toLowerCase().trim());
+  const hdr = (raw[headerRow]||[]).map(h=>(h||'').toString().toLowerCase().trim());
 
-  // Detectar formato BCM: tem "forma" ou "data pagamento" ou "data compra"
-  const isBCM = hdr.some(h => h.includes('forma') || h.includes('pagamento') || (h.includes('data') && hdr.filter(x => x.includes('data')).length >= 2));
+  // Formato BCM: tem "forma pagamento" ou "data pagamento" ou duas colunas de data
+  const isBCM = hdr.some(h => h.includes('forma pagamento') || h.includes('data pagamento') || h.includes('data compra'));
 
   if (isBCM) {
-    // ── Formato BCM ──────────────────────────────────────────────────
-    // Colunas esperadas: Data Pagamento | Data Compra | Descrição | Valor | Forma Pagamento | Tipo | Categoria
-    let colDataPag = -1, colDataCompra = -1, colDesc = -1, colValor = -1, colForma = -1, colTipo = -1, colCat = -1;
-    hdr.forEach((h, i) => {
-      // Data Pagamento: deve conter 'data' E 'pagamento', ou ser a 1ª coluna 'data'
-      if (h.includes('data') && h.includes('pagamento')) { colDataPag = i; return; }
-      // Data Compra: deve conter 'data' E 'compra', ou ser a 2ª coluna 'data'
-      if (h.includes('data') && h.includes('compra')) { colDataCompra = i; return; }
-      // Se só 'data', a primeira é dataPag, segunda é dataCompra
-      if (h === 'data') { colDataPag < 0 ? (colDataPag = i) : (colDataCompra < 0 ? colDataCompra = i : null); return; }
-      if (h.includes('descri') || h.includes('histor') || h.includes('lancamento')) colDesc = i;
-      if ((h.includes('valor') || h === 'r$') && !h.includes('forma')) colValor = i;
-      if (h.includes('forma')) colForma = i;
-      if (h === 'tipo') colTipo = i;
-      if (h.includes('categ')) colCat = i;
+    // ── Formato BCM ────────────────────────────────────────────────────────────
+    // Colunas: (A vazia) | B:Data Pagamento | C:Data Compra | D:Descrição | E:Valor | F:Forma Pagamento | G:Tipo | H:Categoria
+    let colDataPag=-1, colDataComp=-1, colDesc=-1, colValor=-1, colForma=-1, colTipo=-1, colCat=-1;
+    hdr.forEach((h,i) => {
+      if (h.includes('data') && h.includes('pagamento'))   { colDataPag  = i; return; }
+      if (h.includes('data') && h.includes('compra'))      { colDataComp = i; return; }
+      if (h === 'data' && colDataPag < 0)                  { colDataPag  = i; return; }
+      if (h === 'data' && colDataPag >= 0)                 { colDataComp = i; return; }
+      if (h.includes('descri'))                            colDesc  = i;
+      if ((h === 'valor' || h === 'r$') && colValor < 0)  colValor = i;
+      if (h.includes('forma pagamento'))                   colForma = i;
+      if (h === 'tipo' && colTipo < 0)                     colTipo  = i;
+      if (h.includes('categ'))                             colCat   = i;
     });
 
-    for (let i = headerRow + 1; i < raw.length; i++) {
-      const r = raw[i];
-      if (!r) continue;
-      const desc = colDesc >= 0 ? (r[colDesc]||'').toString().trim() : '';
-      const valorRaw = colValor >= 0 ? r[colValor] : null;
-      if (!desc && !valorRaw) continue;
-      const valor = parseFloat((valorRaw||0).toString().replace(/[R$\s]/g,'').replace(',','.'));
-      if (isNaN(valor) || valor <= 0) continue;
+    // Se "Valor" não foi encontrado, procura coluna numérica na 1ª linha de dados
+    if (colValor < 0) {
+      const firstData = raw[headerRow+1] || [];
+      for (let i=0; i<firstData.length; i++) {
+        if (typeof firstData[i]==='number' && firstData[i]>0) { colValor=i; break; }
+      }
+    }
 
-      const dataPag  = colDataPag >= 0  ? parseDate(r[colDataPag])  : '';
-      const dataComp = colDataCompra >= 0 ? parseDate(r[colDataCompra]) : '';
-      const forma    = colForma >= 0 ? (r[colForma]||'').toString().trim() : '';
-      const tipo     = colTipo >= 0  ? (r[colTipo]||'Variável').toString().trim() : 'Variável';
-      const catRaw   = colCat >= 0   ? (r[colCat]||'').toString().trim() : '';
+    for (let i = headerRow+1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || r.every(c=>!c)) continue;
+      const desc  = colDesc  >= 0 ? (r[colDesc]||'').toString().trim() : '';
+      const valor = colValor >= 0 ? parseValor(r[colValor]) : 0;
+      if (!desc && valor <= 0) continue;
+      if (valor <= 0) continue;
 
       rows.push({
-        data: dataPag,
-        data_compra: dataComp,
-        nome: desc,
-        valor: valor.toFixed(2),
-        forma_pagamento: forma,
-        categoria: catRaw || autoCategoria(desc),
-        tipo: tipo,
+        data:            colDataPag  >= 0 ? parseDate(r[colDataPag])  : '',
+        data_compra:     colDataComp >= 0 ? parseDate(r[colDataComp]) : '',
+        nome:            desc,
+        valor:           valor.toFixed(2),
+        forma_pagamento: colForma >= 0 ? (r[colForma]||'').toString().trim() : '',
+        categoria:       colCat   >= 0 ? (r[colCat]  ||'').toString().trim() || autoCategoria(desc) : autoCategoria(desc),
+        tipo:            colTipo  >= 0 ? (r[colTipo] ||'Variável').toString().trim() : 'Variável',
         selecionado: true,
         _fmt: 'bcm'
       });
@@ -2300,8 +2322,8 @@ function parseExcel(workbook) {
     for (let i = headerRow + 1; i < raw.length; i++) {
       const r = raw[i];
       if (!r || !r[colDesc] || !r[colValor]) continue;
-      const valor = parseFloat((r[colValor]||0).toString().replace(',','.'));
-      if (isNaN(valor) || valor <= 0) continue;
+      const valor = parseValor(r[colValor]);
+      if (valor <= 0) continue;
       const descricao = (r[colDesc]||'').toString().trim();
       rows.push({
         data: parseDate(r[colData]),
