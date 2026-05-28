@@ -768,13 +768,13 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
             <thead style="position:sticky;top:0;z-index:2">
               <tr>
                 <th style="width:32px"><input type="checkbox" id="checkAll" onchange="selectAllRows(this.checked)" style="cursor:pointer"></th>
-                <th>Data</th>
+                <th>Data Pag.</th>
+                <th>Data Compra</th>
                 <th>Descrição</th>
-                <th>Tipo</th>
-                <th>Cartão</th>
+                <th>Forma de Pagamento</th>
                 <th>Valor</th>
                 <th style="min-width:160px">Categoria</th>
-                <th>Tipo Gasto</th>
+                <th>Tipo</th>
               </tr>
             </thead>
             <tbody id="importTableBody"></tbody>
@@ -1129,7 +1129,7 @@ function renderCatSection() {
   // conjunto dos números de cartões registrados
   const numerosRegistrados = new Set(db.cartoes.map(c => c.numero));
   // helper: retorna o número do cartão na observação, ou null
-  const getCardNum = d => { const m2 = (d.observacao||'').match(/[•]{4}\s*(\d{4})/); return m2 ? m2[1] : null; };
+  const getCardNum = d => { const mo=(d.observacao||'').match(/[•]{4}\s*(\d{4})/); if(mo) return mo[1]; const mf=(d.forma_pagamento||'').match(/[•]{4}\s*(\d{4})/); return mf?mf[1]:null; };
 
   const cfcEl = document.getElementById('cardFilterRow');
   if (cfcEl) {
@@ -1154,12 +1154,13 @@ function renderCatSection() {
         </div>`;
       }).join('');
 
-    // ── "Outros Cartões": Cartão de Crédito sem número registrado ──
+    // ── "Outros Cartões": cartão sem cadastro (novo formato) ou CC genérico (formato antigo) ──
     const outrosCC = allDesp.filter(d => {
-      const f = (d.forma_pagamento||'').toLowerCase();
       const num = getCardNum(d);
-      return (f === 'cartão de crédito' || f === 'cartao de credito') &&
-             (!num || !numerosRegistrados.has(num));
+      const f = (d.forma_pagamento||'').toLowerCase();
+      if (num && !numerosRegistrados.has(num)) return true;
+      if (!num && (f === 'cartão de crédito' || f === 'cartao de credito')) return true;
+      return false;
     });
     const outrosCCTotal = outrosCC.reduce((s,d)=>s+parseFloat(d.valor||0),0);
     const outrosCCChip = outrosCCTotal > 0
@@ -1169,13 +1170,14 @@ function renderCatSection() {
           <span class="cfc-val">${fmtBRL(outrosCCTotal)}</span>
         </div>` : '';
 
-    // ── Outras formas de pagamento (dinâmico, excl. Cartão de Crédito, maior→menor) ──
+    // ── Outras formas de pagamento (dinâmico, excl. cartões e CC genérico, maior→menor) ──
     const formaIcons = {PIX:'📱',Débito:'🏧','Débito Automático':'🏧',Boleto:'📄',Dinheiro:'💵',Transferência:'🔄',TED:'🔄','TED/DOC':'🔄'};
     const formaMap = {};
     allDesp.forEach(d => {
       const f = (d.forma_pagamento||'').trim();
       const fLow = f.toLowerCase();
-      if (f && fLow !== 'cartão de crédito' && fLow !== 'cartao de credito') {
+      // Excluir: CC genérico, formas que contêm •••• (são cartões tratados acima)
+      if (f && fLow !== 'cartão de crédito' && fLow !== 'cartao de credito' && !f.includes('••••')) {
         formaMap[f] = (formaMap[f]||0) + parseFloat(d.valor||0);
       }
     });
@@ -1206,10 +1208,11 @@ function renderCatSection() {
     catDesp = allDesp.filter(d => getCardNum(d) === dashCardFilter);
   } else if (dashFormaFilter === '__outros_cc__') {
     catDesp = allDesp.filter(d => {
-      const f = (d.forma_pagamento||'').toLowerCase();
       const num = getCardNum(d);
-      return (f === 'cartão de crédito' || f === 'cartao de credito') &&
-             (!num || !numerosRegistrados.has(num));
+      const f = (d.forma_pagamento||'').toLowerCase();
+      if (num && !numerosRegistrados.has(num)) return true;
+      if (!num && (f === 'cartão de crédito' || f === 'cartao de credito')) return true;
+      return false;
     });
   } else if (dashFormaFilter) {
     catDesp = allDesp.filter(d => (d.forma_pagamento||'').trim() === dashFormaFilter);
@@ -1255,15 +1258,17 @@ function openCatDetail(idx) {
   if (!cat) return;
   const {m, y} = getFilter();
   let list = db.despesas.filter(d => d.categoria === cat.nome && inPeriod(d.data, m, y));
-  const _getNum = d => { const mx = (d.observacao||'').match(/[•]{4}\s*(\d{4})/); return mx ? mx[1] : null; };
+  const _getNum = d => { const mo=(d.observacao||'').match(/[•]{4}\s*(\d{4})/); if(mo) return mo[1]; const mf=(d.forma_pagamento||'').match(/[•]{4}\s*(\d{4})/); return mf?mf[1]:null; };
   const _nums = new Set(db.cartoes.map(c => c.numero));
   if (dashCardFilter) {
     list = list.filter(d => _getNum(d) === dashCardFilter);
   } else if (dashFormaFilter === '__outros_cc__') {
     list = list.filter(d => {
-      const f = (d.forma_pagamento||'').toLowerCase();
       const num = _getNum(d);
-      return (f === 'cartão de crédito' || f === 'cartao de credito') && (!num || !_nums.has(num));
+      const f = (d.forma_pagamento||'').toLowerCase();
+      if (num && !_nums.has(num)) return true;
+      if (!num && (f === 'cartão de crédito' || f === 'cartao de credito')) return true;
+      return false;
     });
   } else if (dashFormaFilter) {
     list = list.filter(d => (d.forma_pagamento||'').trim() === dashFormaFilter);
@@ -1417,9 +1422,10 @@ function renderCatDespesasInline() {
 
 // ======================== DESPESAS ========================
 function getDespCartao(d) {
-  const match = (d.observacao||'').match(/[•]{4}\s*(\d{4})/);
-  if (!match) return null;
-  return db.cartoes.find(c => c.numero === match[1]) || null;
+  const mo = (d.observacao||'').match(/[•]{4}\s*(\d{4})/);
+  const num = mo ? mo[1] : ((d.forma_pagamento||'').match(/[•]{4}\s*(\d{4})/)||[])[1];
+  if (!num) return null;
+  return db.cartoes.find(c => c.numero === num) || null;
 }
 
 function limparFiltrosDespesas() {
@@ -1524,7 +1530,9 @@ function renderDespesas() {
       <div>
         <div class="tx-nm">${d.nome}</div>
         <div class="tx-meta">
-          <span>${fmtDate(d.data)}</span><span>·</span>
+          <span>${fmtDate(d.data)}</span>
+          ${d.data_compra && d.data_compra !== d.data ? `<span>·</span><span style="color:var(--ink-muted);font-size:10px">compra ${fmtDate(d.data_compra)}</span>` : ''}
+          <span>·</span>
           <span>${d.categoria}</span><span>·</span>
           <span>${d.forma_pagamento||''}</span>
           ${cartaoTag?`<span>·</span>${cartaoTag}`:''}
@@ -1666,7 +1674,10 @@ function renderCartoes() {
   el.innerHTML = `<div class="grid-2">` + db.cartoes.map((c,i) => {
     // Fatura calculada a partir das despesas importadas no mês atual
     const fatura = db.despesas
-      .filter(d => inPeriod(d.data, m, y) && (d.observacao||'').includes('•••• '+c.numero))
+      .filter(d => inPeriod(d.data, m, y) && (
+        (d.observacao||'').includes('•••• '+c.numero) ||
+        (d.forma_pagamento||'').includes('•••• '+c.numero)
+      ))
       .reduce((s,d) => s+parseFloat(d.valor||0), 0);
     const lim = parseFloat(c.limite||0);
     const pct = lim > 0 ? Math.min(100, fatura/lim*100) : 0;
@@ -2172,14 +2183,35 @@ function autoCategoria(descricao) {
   return 'Outros';
 }
 
-// Detecta formato do banco e extrai transações
+// Converte data (Date, serial Excel ou string) → 'YYYY-MM-DD'
+function parseDate(rawDate) {
+  if (!rawDate) return '';
+  if (rawDate instanceof Date) return rawDate.toISOString().slice(0,10);
+  if (typeof rawDate === 'number') {
+    const d = new Date((rawDate - 25569) * 86400 * 1000);
+    return d.toISOString().slice(0,10);
+  }
+  const s = rawDate.toString().trim();
+  // DD/MM/YYYY ou DD/MM/YY
+  const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (dmyMatch) {
+    const [, dd, mm, yy] = dmyMatch;
+    const yyyy = yy.length === 2 ? '20'+yy : yy;
+    return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+  }
+  const d = new Date(s);
+  if (!isNaN(d)) return d.toISOString().slice(0,10);
+  return s.slice(0,10);
+}
+
+// Detecta formato BCM ou banco e extrai transações
 function parseExcel(workbook) {
   const rows = [];
   const sheetName = workbook.SheetNames[0];
   const ws = workbook.Sheets[sheetName];
   const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
 
-  // Detectar linha de cabeçalho: procura linha com "data" e "valor"
+  // Detectar linha de cabeçalho
   let headerRow = -1;
   for (let i = 0; i < Math.min(raw.length, 15); i++) {
     const rowStr = (raw[i] || []).join(' ').toLowerCase();
@@ -2189,55 +2221,89 @@ function parseExcel(workbook) {
       break;
     }
   }
+  if (headerRow < 0) return rows;
 
-  // Detectar colunas
-  let colData = 1, colDesc = 2, colValor = 4, colTipo = 5, colCartao = 6;
-  if (headerRow >= 0) {
-    const hdr = raw[headerRow];
-    hdr.forEach((cell, i) => {
-      const v = (cell||'').toString().toLowerCase();
+  const hdr = (raw[headerRow] || []).map(h => (h||'').toString().toLowerCase().trim());
+
+  // Detectar formato BCM: tem "forma" ou "data pagamento" ou "data compra"
+  const isBCM = hdr.some(h => h.includes('forma') || h.includes('pagamento') || (h.includes('data') && hdr.filter(x => x.includes('data')).length >= 2));
+
+  if (isBCM) {
+    // ── Formato BCM ──────────────────────────────────────────────────
+    // Colunas esperadas: Data Pagamento | Data Compra | Descrição | Valor | Forma Pagamento | Tipo | Categoria
+    let colDataPag = -1, colDataCompra = -1, colDesc = -1, colValor = -1, colForma = -1, colTipo = -1, colCat = -1;
+    hdr.forEach((h, i) => {
+      // Data Pagamento: deve conter 'data' E 'pagamento', ou ser a 1ª coluna 'data'
+      if (h.includes('data') && h.includes('pagamento')) { colDataPag = i; return; }
+      // Data Compra: deve conter 'data' E 'compra', ou ser a 2ª coluna 'data'
+      if (h.includes('data') && h.includes('compra')) { colDataCompra = i; return; }
+      // Se só 'data', a primeira é dataPag, segunda é dataCompra
+      if (h === 'data') { colDataPag < 0 ? (colDataPag = i) : (colDataCompra < 0 ? colDataCompra = i : null); return; }
+      if (h.includes('descri') || h.includes('histor') || h.includes('lancamento')) colDesc = i;
+      if ((h.includes('valor') || h === 'r$') && !h.includes('forma')) colValor = i;
+      if (h.includes('forma')) colForma = i;
+      if (h === 'tipo') colTipo = i;
+      if (h.includes('categ')) colCat = i;
+    });
+
+    for (let i = headerRow + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r) continue;
+      const desc = colDesc >= 0 ? (r[colDesc]||'').toString().trim() : '';
+      const valorRaw = colValor >= 0 ? r[colValor] : null;
+      if (!desc && !valorRaw) continue;
+      const valor = parseFloat((valorRaw||0).toString().replace(/[R$\s]/g,'').replace(',','.'));
+      if (isNaN(valor) || valor <= 0) continue;
+
+      const dataPag  = colDataPag >= 0  ? parseDate(r[colDataPag])  : '';
+      const dataComp = colDataCompra >= 0 ? parseDate(r[colDataCompra]) : '';
+      const forma    = colForma >= 0 ? (r[colForma]||'').toString().trim() : '';
+      const tipo     = colTipo >= 0  ? (r[colTipo]||'Variável').toString().trim() : 'Variável';
+      const catRaw   = colCat >= 0   ? (r[colCat]||'').toString().trim() : '';
+
+      rows.push({
+        data: dataPag,
+        data_compra: dataComp,
+        nome: desc,
+        valor: valor.toFixed(2),
+        forma_pagamento: forma,
+        categoria: catRaw || autoCategoria(desc),
+        tipo: tipo,
+        selecionado: true,
+        _fmt: 'bcm'
+      });
+    }
+  } else {
+    // ── Formato banco legado ──────────────────────────────────────────
+    let colData = 1, colDesc = 2, colValor = 4, colTipo = 5, colCartao = 6;
+    hdr.forEach((v, i) => {
       if (v.includes('data') || v.includes('date')) colData = i;
       if (v.includes('descri') || v.includes('estabele') || v.includes('histor') || v.includes('lancamento')) colDesc = i;
       if (v.includes('valor') || v.includes('amount') || v.includes('debito') || v === 'r$') colValor = i;
       if (v.includes('tipo')) colTipo = i;
       if (v.includes('cart') || v.includes('final')) colCartao = i;
     });
-  }
 
-  const dataStart = headerRow >= 0 ? headerRow + 1 : 3;
-  for (let i = dataStart; i < raw.length; i++) {
-    const r = raw[i];
-    if (!r || !r[colDesc] || !r[colValor]) continue;
-    const valor = parseFloat((r[colValor]||0).toString().replace(',','.'));
-    if (isNaN(valor) || valor <= 0) continue;
-
-    // Formatar data
-    let dataStr = '';
-    const rawDate = r[colData];
-    if (rawDate instanceof Date) {
-      dataStr = rawDate.toISOString().slice(0,10);
-    } else if (typeof rawDate === 'number') {
-      // Serial Excel
-      const d = new Date((rawDate - 25569) * 86400 * 1000);
-      dataStr = d.toISOString().slice(0,10);
-    } else if (rawDate) {
-      // String date — try to parse
-      const d = new Date(rawDate.toString().trim());
-      if (!isNaN(d)) dataStr = d.toISOString().slice(0,10);
-      else dataStr = rawDate.toString().slice(0,10);
+    for (let i = headerRow + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || !r[colDesc] || !r[colValor]) continue;
+      const valor = parseFloat((r[colValor]||0).toString().replace(',','.'));
+      if (isNaN(valor) || valor <= 0) continue;
+      const descricao = (r[colDesc]||'').toString().trim();
+      rows.push({
+        data: parseDate(r[colData]),
+        data_compra: '',
+        nome: descricao,
+        valor: valor.toFixed(2),
+        tipo_compra: (r[colTipo]||'Compra à vista').toString(),
+        cartao: (r[colCartao]||'').toString(),
+        forma_pagamento: 'Cartão de Crédito',
+        categoria: autoCategoria(descricao),
+        tipo: 'Variável',
+        selecionado: true,
+        _fmt: 'banco'
+      });
     }
-
-    const descricao = (r[colDesc]||'').toString().trim();
-    rows.push({
-      data: dataStr,
-      nome: descricao,
-      valor: valor.toFixed(2),
-      tipo_compra: (r[colTipo]||'Compra à vista').toString(),
-      cartao: (r[colCartao]||'').toString(),
-      categoria: autoCategoria(descricao),
-      tipo: 'Variável',
-      selecionado: true
-    });
   }
   return rows;
 }
@@ -2305,18 +2371,19 @@ function renderImportTable() {
 
   // Summary
   const total = importRows.reduce((s,r) => s+parseFloat(r.valor),0);
+  const isBCMFormat = importRows.length > 0 && importRows[0]._fmt === 'bcm';
   document.getElementById('importSummaryBar').innerHTML =
     `<span style="font-family:'Oswald',sans-serif;letter-spacing:1px;font-size:12px"><strong style="color:var(--gold)">${importRows.length}</strong> transações</span>` +
     `<span style="font-family:'Oswald',sans-serif;letter-spacing:1px;font-size:12px">Total: <strong style="color:var(--gold)">R$ ${total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</strong></span>` +
-    `<span style="font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1px;opacity:.7">Forma: Cartão de Crédito · Revise as categorias antes de importar</span>`;
+    `<span style="font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1px;opacity:.7">${isBCMFormat ? 'Formato BCM · Revise e confirme antes de importar' : 'Formato banco · Forma: Cartão de Crédito · Revise as categorias'}</span>`;
 
   document.getElementById('importTableBody').innerHTML = importRows.map((r, i) => `
     <tr id="irow_${i}" style="${r.selecionado?'':'opacity:.45'}">
       <td><input type="checkbox" ${r.selecionado?'checked':''} onchange="toggleRow(${i},this.checked)" style="cursor:pointer"></td>
-      <td style="font-family:'Oswald',sans-serif;font-size:11px;white-space:nowrap">${r.data}</td>
-      <td style="font-size:12px;font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.nome}">${r.nome}</td>
-      <td style="font-size:10px;color:var(--ink-muted)">${r.tipo_compra.includes('Parcela')?'<span style="background:var(--navy);color:var(--gold);font-family:Oswald,sans-serif;font-size:9px;padding:2px 5px">PARCELA</span>':r.tipo_compra.includes('intern')?'<span style="background:var(--blue-soft);color:var(--blue);font-family:Oswald,sans-serif;font-size:9px;padding:2px 5px">INTER\'L</span>':'<span style="background:var(--line-soft);color:var(--ink-muted);font-family:Oswald,sans-serif;font-size:9px;padding:2px 5px">À VISTA</span>'}</td>
-      <td style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--ink-muted)">•••• ${r.cartao}</td>
+      <td style="font-family:'Oswald',sans-serif;font-size:11px;white-space:nowrap">${r.data||'—'}</td>
+      <td style="font-family:'Oswald',sans-serif;font-size:10px;color:var(--ink-muted);white-space:nowrap">${r.data_compra||'—'}</td>
+      <td style="font-size:12px;font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.nome}">${r.nome}</td>
+      <td style="font-size:11px;color:var(--navy);white-space:nowrap">${r.forma_pagamento||'—'}</td>
       <td style="font-family:'Oswald',sans-serif;font-weight:700;font-size:12px;color:var(--red);white-space:nowrap">R$ ${parseFloat(r.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
       <td>
         <select class="form-select" style="font-size:11px;padding:4px 6px;border-radius:0" onchange="importRows[${i}].categoria=this.value">
@@ -2370,18 +2437,33 @@ async function confirmImport() {
       nome: r.nome,
       valor: parseFloat(r.valor),
       data: r.data,
+      data_compra: r.data_compra || null,
       categoria: r.categoria,
-      forma_pagamento: 'Cartão de Crédito',
+      forma_pagamento: r.forma_pagamento || (r._fmt === 'banco' ? 'Cartão de Crédito' : ''),
       tipo: r.tipo,
       emoji: getCatEmoji(r.categoria),
-      observacao: r.tipo_compra + (r.cartao ? ' · Cartão •••• ' + r.cartao : '')
+      observacao: r._fmt === 'banco'
+        ? ((r.tipo_compra||'') + (r.cartao ? ' · Cartão •••• ' + r.cartao : ''))
+        : ''
     };
     db.despesas.push(item);
     toInsert.push(item);
     novas++;
   });
 
-  if (toInsert.length) await _sb.from('despesas').insert(toInsert);
+  if (toInsert.length) {
+    const { error } = await _sb.from('despesas').insert(toInsert);
+    if (error) {
+      // Se o erro for por coluna data_compra inexistente, tenta sem ela
+      if (error.message && error.message.includes('data_compra')) {
+        const fallback = toInsert.map(({data_compra, ...rest}) => rest);
+        await _sb.from('despesas').insert(fallback);
+        toast('⚠️ Adicione a coluna data_compra no Supabase para salvar a data de compra.');
+      } else {
+        toast('Erro ao importar: ' + error.message); return;
+      }
+    }
+  }
   closeImport();
   renderDespesas();
   renderDashboard();
