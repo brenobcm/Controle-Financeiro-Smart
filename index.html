@@ -834,8 +834,18 @@ function saveDB() {} // no-op: writes vão direto ao Supabase
 
 async function loadDB() {
   await Promise.all(TABLES.map(async t => {
-    const { data } = await _sb.from(t).select('*');
-    db[t] = data || [];
+    // Pagina em blocos de 1000 para buscar TODOS os registros (PostgREST limita por padrão)
+    let all = [];
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await _sb.from(t).select('*').range(from, from + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    db[t] = all;
   }));
   if (!db.categorias.length) await seedCategorias();
   if (!db.cat_receitas.length) await seedCatReceitas();
@@ -2526,25 +2536,48 @@ async function confirmImport() {
     novas++;
   });
 
-  // ── Inserir novos ──────────────────────────────────────────────
+  console.log('[IMPORT] Loop finalizado — novas:', novas, '| atualizadas:', atualizadas, '| ignoradas:', ignoradas, '| existentes snapshot:', existentes.size);
+
+  // ── Inserir novos em lotes de 200 ──────────────────────────────
+  const LOTE = 200;
+  let falhaInsert = 0;
   if (toInsert.length) {
-    const { error } = await _sb.from('despesas').insert(toInsert);
-    if (error) {
-      if (error.message && error.message.includes('data_compra')) {
-        const fallback = toInsert.map(({data_compra, ...rest}) => rest);
-        await _sb.from('despesas').insert(fallback);
-      } else {
-        toast('Erro ao importar: ' + error.message); return;
+    for (let i = 0; i < toInsert.length; i += LOTE) {
+      const chunk = toInsert.slice(i, i + LOTE);
+      const { error } = await _sb.from('despesas').insert(chunk);
+      if (error) {
+        console.error('[IMPORT] Erro lote', Math.floor(i/LOTE)+1, ':', error.message);
+        if (error.message && error.message.includes('data_compra')) {
+          const fallback = chunk.map(({data_compra, ...rest}) => rest);
+          const { error: e2 } = await _sb.from('despesas').insert(fallback);
+          if (e2) { falhaInsert += chunk.length; console.error('[IMPORT] Fallback falhou:', e2.message); }
+        } else {
+          falhaInsert += chunk.length;
+          toast('⚠️ Erro no lote ' + (Math.floor(i/LOTE)+1) + ': ' + error.message);
+        }
       }
     }
   }
 
   // ── Atualizar duplicatas ────────────────────────────────────────
   if (toUpdate.length) {
-    // Batch update — atualiza em paralelo
     await Promise.all(toUpdate.map(({id, patch}) =>
       _sb.from('despesas').update(patch).eq('id', id)
     ));
+  }
+
+  // ── Recarregar db.despesas do Supabase para garantir consistência ──
+  {
+    let all = [], from = 0, PAGE = 1000;
+    while (true) {
+      const { data } = await _sb.from('despesas').select('*').range(from, from + PAGE - 1);
+      if (!data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    db.despesas = all;
+    console.log('[IMPORT] db.despesas após reload:', db.despesas.length);
   }
 
   closeImport();
@@ -2555,6 +2588,7 @@ async function confirmImport() {
   if (novas > 0) parts.push(`${novas} nova(s)`);
   if (atualizadas > 0) parts.push(`${atualizadas} atualizada(s)`);
   if (ignoradas > 0) parts.push(`${ignoradas} ignorada(s)`);
+  if (falhaInsert > 0) parts.push(`⚠️ ${falhaInsert} com erro`);
   toast(`✅ Importação concluída: ${parts.join(' · ')}`);
   go('despesas');
 }
