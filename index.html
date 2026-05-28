@@ -596,6 +596,7 @@ html,body{height:100%;font-family:'Manrope',sans-serif;color:var(--ink);backgrou
         <option value="Variável">Variável</option>
       </select>
       <button onclick="applyBulkEdit()" class="btn btn-gold btn-sm">✓ Aplicar</button>
+      <button onclick="applyBulkDelete()" class="btn btn-sm" style="background:var(--red);color:#fff;border:none">🗑 Apagar</button>
       <button onclick="clearBulkSelect()" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.2)">✕ Cancelar</button>
     </div>
     <div id="despesasList"></div>
@@ -1607,6 +1608,18 @@ async function applyBulkEdit() {
   // Batch update Supabase
   await Promise.all(ids.map(id => _sb.from('despesas').update(patch).eq('id', id)));
   toast(`✅ ${ids.length} despesa(s) atualizada(s)!`);
+  selectedDespIds.clear();
+  renderDespesas(); renderDashboard();
+}
+
+async function applyBulkDelete() {
+  const n = selectedDespIds.size;
+  if (n === 0) return;
+  if (!confirm(`Apagar ${n} despesa${n > 1 ? 's' : ''} selecionada${n > 1 ? 's' : ''}? Esta ação não pode ser desfeita.`)) return;
+  const ids = [...selectedDespIds];
+  db.despesas = db.despesas.filter(d => !ids.includes(d.id));
+  await Promise.all(ids.map(id => _sb.from('despesas').delete().eq('id', id)));
+  toast(`🗑 ${n} despesa${n > 1 ? 's' : ''} apagada${n > 1 ? 's' : ''}!`);
   selectedDespIds.clear();
   renderDespesas(); renderDashboard();
 }
