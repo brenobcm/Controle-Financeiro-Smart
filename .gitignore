@@ -1,0 +1,9 @@
+.DS_Store
+.claude/
+*.xlsx
+bcm-logo.jpg
+gantt_app/
+cronograma.html
+schema*.sql
+server.py
+SETUP.md
